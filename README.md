@@ -1,5 +1,5 @@
 # P2Plant
-Server hosting process variables for point-to-point communications.
+Server, which hosts process variables for point-to-point communicationswith a client.
 
 ## Dependency
 TinyCBOR: https://github.com/intel/tinycbor
