@@ -2,7 +2,7 @@
 */
 #ifndef DEFINES_H
 #define DEFINES_H
-#define VERSION "0.2.0 2025-02-02"
+#define VERSION "0.3.0 2025-02-09"
 #include "../../tinycbor/src/cbor.h"
 
 #define PLATFORM_LINUX 1
@@ -49,9 +49,13 @@ void dumpbytes(const uint8_t *buf, size_t len);
 void encode_error(CborEncoder* encoder, const char* key, const char* value);
 
 //``````````````````Firmware-specific functions````````````````````````````````
-int parm_init();
+//  entries for main loop
+int plant_init();
+int plant_processing();
+void plant_periodic_update();
+
+//  Plant's internal functions
 int parm_init_reply(CborEncoder* encoder);
-int parm_processing();
 int parm_info(const char* parmName);
 int parm_get(const char* parmName);
 int parm_set(const char* parmName, CborType type, const void* pvalue,
@@ -59,6 +63,5 @@ int parm_set(const char* parmName, CborType type, const void* pvalue,
 int parm_set_tagged(const char* parmName, CborTag tag, const void* pvalue,
                     unsigned int count);
 //int parm_subscribe(const char* parmName);
-void parm_periodic_update();
 
 #endif //DEFINES_H

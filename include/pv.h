@@ -470,7 +470,7 @@ int parm_get(const char* parmName){
 }
 int parm_set(const char* parmName, CborType type, 
   const void* pvalue, uint count){
-    //printf("set %s, type %i\n", parmName, value->type);
+    if(DBG>=1) printf("set %s, type %i\n", parmName, type);
     PV* pv = pvof(parmName);
 	if (pv == NULL){
         return 0;
@@ -495,9 +495,12 @@ int parm_set(const char* parmName, CborType type,
         break;
     }
     default:
-        ;
+        // Should never get here
+        printf("ERR: Not supported type %i of %s value\n", type, parmName); 
+        encode_error(pRootEncoder, parmName, "ERR: Not supported type of value");
+        break;
     }
-    return 0;
+    return 0; // If not 0 then assert will be raised and program aborted
 }
 int parm_set_tagged(const char* parmName, CborTag tag, const void* buf,
                     uint count){
@@ -507,10 +510,5 @@ int parm_set_tagged(const char* parmName, CborTag tag, const void* buf,
 	}    
     return pv->set_tagged(tag, buf, count);
 }
-/*int parm_subscribe(const char* parmName){
-    printf(">builtin subscribe %s\n", parmName);
-    return 0;
-}
-*/
 //,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
 #endif //PV_H

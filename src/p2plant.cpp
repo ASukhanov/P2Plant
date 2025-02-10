@@ -14,7 +14,7 @@ handle the subscription activation.
 
 //``````````````````Globals````````````````````````````````````````````````````
 #define LoopReportMS 10000 //Interval in ms between loop reporting
-uint8_t DBG = 0;// Debugging verbosity level, 3 is highest. Could be changed in firmvare 
+uint8_t DBG = 1;// Debugging verbosity level, 3 is highest. Could be changed in firmvare 
 uint16_t NPV = 0;// Number of parameters
 struct timespec ptimer_start, ptimer_end;
 uint32_t cycle_count = 0;
@@ -48,7 +48,7 @@ static int parm_dispatch(int cmd, const char* parmName, CborValue* value=NULL){
         break;
         }
     /*case PARM_CMD_SUBSCRIBE: {
-        ret = parm_subscribe(parmName);
+        ret = plant_subscribe(parmName);
         }
         break;*/
     }
@@ -216,6 +216,7 @@ static CborError parse_cbor_buffer(CborValue *it, int nestingLevel)
         case CborNullType:
             if(DBG>=2) puts("null");
             break;
+        /*
         case CborUndefinedType:
             if(DBG>=2) puts("undefined");
             break;
@@ -245,6 +246,7 @@ static CborError parse_cbor_buffer(CborValue *it, int nestingLevel)
         case CborDoubleType: {
             double val;
             ret = cbor_value_get_double(it, &val);
+            if(DBG>=1) printf("Double %g\n",val); 
             CBOR_CHECK(ret, "parse double float type failed", err, ret);
             item++;
             if(DBG>=2) printf("%g\n", val);
@@ -253,6 +255,11 @@ static CborError parse_cbor_buffer(CborValue *it, int nestingLevel)
         case CborInvalidType: {
             ret = CborErrorUnknownType;
             CBOR_CHECK(ret, "unknown cbor type", err, ret);
+            break;
+        }
+        */
+        default: {
+            encode_error(&branch_encoder, parName, "in parse_cbor_buffer: Not supported type");
             break;
         }
         }
@@ -312,7 +319,7 @@ void send_encoded_buffer(){
         }
     }
 }
-void process_request(const uint8_t* msg, int msglen){
+void plant_process_request(const uint8_t* msg, int msglen){
     CborValue it;
 
     if(DBG>=2){
@@ -347,7 +354,7 @@ int main()
     uint8_t *msg = NULL;
     int cycle_count_prev = 0;
 
-    NPV = parm_init();
+    NPV = plant_init();
     if (NPV == 0){
         printf("ERR: no parameters served\n");
         return 1;
@@ -365,7 +372,7 @@ int main()
             host_rps_time[0] = ptimer_end.tv_sec;
             host_rps_time[1] = ptimer_end.tv_nsec;
             printf("PM:rps=%i reqs:%u,%u, trig:%u client:%i\n",host_rps, requests_received, requests_received_since_last_periodic, trig_count, client_alive);
-            parm_periodic_update();
+            plant_periodic_update();
             cycle_count_prev = cycle_count;
             if (requests_received == requests_received_since_last_periodic){
                 if (client_alive == true){
@@ -377,7 +384,7 @@ int main()
         // check if request arrived from the client
         msglen = transport_recv(&msg);
         if (msglen == -1){ // no requests
-            parm_processing();
+            plant_processing();
             continue;
         }
 
@@ -385,6 +392,7 @@ int main()
         if (client_alive == false){
             printf("PM:Client is re-connected.\n");}
         client_alive = true;
-        process_request(msg, msglen);
+        plant_process_request(msg, msglen);
     }
+return 0;
 }

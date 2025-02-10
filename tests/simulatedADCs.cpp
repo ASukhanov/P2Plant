@@ -1,25 +1,12 @@
 /*Parameter server firmware of the emulated MCUFEC.
  */
-#define ParmSimulator_VERSION "0.1.3 2024-04-01"// host_rps removed, icluded in perf.
-
+#define ParmSimulator_VERSION "0.1.4 2025-02-09"//
 #include <stdio.h>
 #include <stdlib.h>
 #include <time.h>
 #include "../include/defines.h"
 #include "../include/pv.h"
 
-//``````````````````Helper functions```````````````````````````````````````````
-int mssleep(long miliseconds)
-{
-   struct timespec rem;
-   struct timespec req= {
-       (int)(miliseconds / 1000),     // secs (Must be Non-Negative)
-       (miliseconds % 1000) * 1000000 // nano (Must be in range of 0 to 999999999)
-   };
-   //printf("s,ns = %li,%li\n", req.tv_sec, req.tv_nsec);
-   return nanosleep(&req , &rem);
-   return 0;
-}
 //``````````````````Definitions````````````````````````````````````````````````
 #define mega 1000000
 #define TTY_BAUDRATE 7372800
@@ -34,6 +21,9 @@ int mssleep(long miliseconds)
 #define ADC_Max_nChannels 8
 #define ADC_Max_nSamples 1000
 #define ADC_Max_value 4095
+
+//``````````````````Helper functions```````````````````````````````````````````
+int mssleep(long miliseconds);// from defines
 
 //``````````````````Memory for array parameters````````````````````````````````
 static int16_t adc_offsets[] = {1, 2, 3, 32000, -32000, 16, 17, 18};
@@ -97,7 +87,7 @@ int pv_debug_setter(){
 extern uint32_t host_rps;// defined in parmfirm
 extern uint32_t host_rps_time[2];
 extern PV** PVs;
-int parm_init(){
+int plant_init(){
     // Initialize parameters, return number of parameters served
     printf("ParmSimulator %s\n", ParmSimulator_VERSION);
     pv_version.set(MCU_VERSION);
@@ -138,8 +128,8 @@ int parm_init(){
     return (sizeof(_PVs)/sizeof(PV*));
 }
 extern uint32_t trig_count;
-void parm_periodic_update(){
-    if(DBG>=1)printf("parm_periodic_update @ %i s, host_rps=%i\n",host_rps_time[0],host_rps);
+void plant_periodic_update(){
+    if(DBG>=1)printf("plant_periodic_update @ %i s, host_rps=%i\n",host_rps_time[0],host_rps);
     perf[TRIG_COUNT] = trig_count;
     perf[HOST_RPS] = host_rps;
     pv_perf.timestamp.tv_sec = host_rps_time[0];
@@ -147,7 +137,7 @@ void parm_periodic_update(){
     if(DBG>=1)printf("run: %s\n",pv_run.value.str);
 }
 
-extern struct timespec ptimer_end;
+/*extern struct timespec ptimer_end;
 static struct timespec last = {0,0};
 bool is_triggered(uint interval_msec){
     bool r = false;
@@ -166,6 +156,7 @@ bool is_triggered(uint interval_msec){
     }
     return r;
 }
+*/
 // defined in parmain
 void init_encoder(bool subscription);
 void close_encoder();
@@ -179,13 +170,15 @@ void subscriptionDelivery(){
     send_encoded_buffer();
 }
 //,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
-int parm_processing()
+int plant_processing()
 {
     if (pv_sleep.value.u2 != 0){
-        mssleep(pv_sleep.value.u2);}//the function call alone takes 50 us
+        mssleep(pv_sleep.value.u2);}
     if (not client_alive){
         return 0;}
-    if (is_triggered(10)){
+    
+    //if (is_triggered(10)){
+    if (true){
         if(starts_with(pv_run.value.str, "start")){
             trig_count++;
             if(DBG>=1)printf("Trigger %u\n",trig_count);

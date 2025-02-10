@@ -33,6 +33,17 @@ int transport_init(void){
     msgid_rcv = msgget(key, 0666 | IPC_CREAT);
     msgid_snd = msgget(key+1, 0666 | IPC_CREAT);
     printf("PF:IPC Message Output Queue id_rcv=%i, id_snd=%i \n", msgid_rcv, msgid_snd);
+
+    //Purge any pending messages
+    uint8_t *msg = NULL;
+    int ii = 0;
+
+    while (transport_recv(&msg) > 0){
+        ii += 1;
+        //printf("PF: purging: %s\n", msg);
+    }
+    if (ii) printf("PF: Purged: %i messages\n", ii);
+
     return 0;
 }
 int transport_recv(uint8_t **msg){
