@@ -5,4 +5,8 @@ Server, which hosts process variables for point-to-point communications with a c
 TinyCBOR: https://github.com/intel/tinycbor
 
 ## Build
-gcc src/main.cpp src/helpers.cpp src/transport_ipc.cpp tests/simulatedADCs.cpp ../tinycbor/lib/libtinycbor.a -o bin/simulatedADCs
+make
+
+# Examples
+See https://github.com/ASukhanov/P2PlantAccess
+
