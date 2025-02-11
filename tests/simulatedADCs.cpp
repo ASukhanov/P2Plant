@@ -1,6 +1,6 @@
 /*Parameter server firmware of the emulated MCUFEC.
  */
-#define ParmSimulator_VERSION "0.1.4 2025-02-09"//
+#define ParmSimulator_VERSION "0.4.1 2025-02-11"// re-factored
 #include <stdio.h>
 #include <stdlib.h>
 #include <time.h>
@@ -30,17 +30,16 @@ extern char* VERSION;
 static uint16_t LoopReportMS = 10000;
 static uint32_t requests_received = 0;
 static uint32_t requests_received_since_last_periodic = 0;
-static struct timespec ptimer_start, ptimer_end;
+static struct timespec ptimer_last_update, ptimer_now;
 //``````````````````Helper functions```````````````````````````````````````````
 int mssleep(long miliseconds);// from defines
 static bool has_periodic_interval_elapsed(){
-    clock_gettime(CLOCK_REALTIME, &ptimer_end);
-    int dms =   (ptimer_end.tv_sec - ptimer_start.tv_sec)*1000 +\
-                (ptimer_end.tv_nsec - ptimer_start.tv_nsec)/1000000;
+    int dms =   (ptimer_now.tv_sec - ptimer_last_update.tv_sec)*1000 +\
+                (ptimer_now.tv_nsec - ptimer_last_update.tv_nsec)/1000000;
     if (dms < LoopReportMS)
         return false;
-    ptimer_start.tv_sec = ptimer_end.tv_sec;
-    ptimer_start.tv_nsec = ptimer_end.tv_nsec;
+    ptimer_last_update.tv_sec = ptimer_now.tv_sec;
+    ptimer_last_update.tv_nsec = ptimer_now.tv_nsec;
     return true;
 }
 //``````````````````Memory for array parameters````````````````````````````````
@@ -89,11 +88,15 @@ static PV* _PVs[] = {
 static uint16_t adc_samples[ADC_Max_nChannels*ADC_Max_nSamples];
 static void update_adcs(uint32_t base){
     int nsamples = pv_adc_reclen.value.u2;
+    // Update ADC data
     for (uint32_t iadc=0; iadc<pv_adc.shape[0]; iadc++){
         for (uint32_t ii=0; ii<pv_adc.shape[1]; ii++){
             adc_samples[iadc*nsamples + ii] = (base+iadc+ii) % pv_adc.shape[1];
         }
     }
+    // Update ADC timestamp
+    pv_adc.timestamp.tv_sec = ptimer_now.tv_sec;
+    pv_adc.timestamp.tv_nsec = ptimer_now.tv_nsec;
 }
 //``````````````````Setters````````````````````````````````````````````````````
 int pv_debug_setter(){
@@ -102,8 +105,7 @@ int pv_debug_setter(){
     return 0;
 }
 //``````````````````Command handlers```````````````````````````````````````````
-extern uint32_t host_rps;// defined in parmfirm
-extern uint32_t host_rps_time[2];
+static uint32_t host_rps;// defined in parmfirm
 extern PV** PVs;
 int plant_init(){
     // Initialize parameters, return number of parameters served
@@ -149,28 +151,28 @@ int plant_init(){
 static uint32_t trig_count;
 static void periodic_update(){
     if(DBG>=1)printf("periodic_update @ %i s, host_rps=%i, run: %s\n",
-        host_rps_time[0], host_rps, pv_run.value.str);
+        ptimer_now.tv_sec, host_rps, pv_run.value.str);
     perf[TRIG_COUNT] = trig_count;
     perf[HOST_RPS] = host_rps;
-    pv_perf.timestamp.tv_sec = host_rps_time[0];
-    pv_perf.timestamp.tv_nsec = host_rps_time[1];
+    pv_perf.timestamp.tv_sec = ptimer_now.tv_sec;
+    pv_perf.timestamp.tv_nsec = ptimer_now.tv_nsec;
 }
 
-/*extern struct timespec ptimer_end;
+/*extern struct timespec ptimer_now;
 static struct timespec last = {0,0};
 bool is_triggered(uint interval_msec){
     bool r = false;
-    //printf("t:%li,%li %li,%li, %i\n", ptimer_end.tv_sec, ptimer_end.tv_nsec,
+    //printf("t:%li,%li %li,%li, %i\n", ptimer_now.tv_sec, ptimer_now.tv_nsec,
     //    last.tv_sec, last.tv_nsec, trig_count);
-    if (ptimer_end.tv_sec > last.tv_sec + interval_msec/1000){
+    if (ptimer_now.tv_sec > last.tv_sec + interval_msec/1000){
         r = true;
     }else{
-        if (ptimer_end.tv_nsec > last.tv_nsec + interval_msec*1000000){
+        if (ptimer_now.tv_nsec > last.tv_nsec + interval_msec*1000000){
             r = true;}
     }
     if (r == true){
-        last.tv_sec = ptimer_end.tv_sec;
-        last.tv_nsec = ptimer_end.tv_nsec;
+        last.tv_sec = ptimer_now.tv_sec;
+        last.tv_nsec = ptimer_now.tv_nsec;
         //printf("True\n");
     }
     return r;
@@ -224,16 +226,14 @@ int main(){
     }
     printf("Defined %i parameters\n", NPV);
     if (transport_init()) exit(1);
-    clock_gettime(CLOCK_REALTIME, &ptimer_start);
+    clock_gettime(CLOCK_REALTIME, &ptimer_last_update);
 
     // Main loop
     while (msglen != 0){
         cycle_count++;
-
+        clock_gettime(CLOCK_REALTIME, &ptimer_now);// latch time
         if (has_periodic_interval_elapsed()){
             host_rps = (cycle_count - cycle_count_prev)*1000/LoopReportMS;
-            host_rps_time[0] = ptimer_end.tv_sec;
-            host_rps_time[1] = ptimer_end.tv_nsec;
             printf("ADC:rps=%i reqs:%u,%u, trig:%u client:%i\n",host_rps, requests_received, requests_received_since_last_periodic, trig_count, plant_client_alive);
             periodic_update();
             cycle_count_prev = cycle_count;
