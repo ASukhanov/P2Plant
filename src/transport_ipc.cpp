@@ -23,16 +23,16 @@ int transport_init(void){
     // ftok to generate unique key
     key = ftok("/tmp/ipcbor.ftok", 65);
     if (key == -1){
-        printf("PF:ERR. Could not create IPC Message Key. Please do: 'touch  /tmp/ipcbor.ftok'\n");
+        printf("TrI:ERR. Could not create IPC Message Key. Please do: 'touch  /tmp/ipcbor.ftok'\n");
         return 1;
     }
-    printf("PF:ftok key: %i\n",key);
+    printf("TrI:ftok key: %i\n",key);
     //rcv_buffer.mesg_type = 27;// 27 is arbitrary
     rcv_buffer.mesg_type = 1;// ISSUE: other than 1 does not work for msgsnd
     // msgget creates a rcv_buffer queue and returns identifier 
     msgid_rcv = msgget(key, 0666 | IPC_CREAT);
     msgid_snd = msgget(key+1, 0666 | IPC_CREAT);
-    printf("PF:IPC Message Output Queue id_rcv=%i, id_snd=%i \n", msgid_rcv, msgid_snd);
+    printf("TrI:IPC Message Output Queue id_rcv=%i, id_snd=%i \n", msgid_rcv, msgid_snd);
 
     //Purge any pending messages
     uint8_t *msg = NULL;
@@ -40,18 +40,18 @@ int transport_init(void){
 
     while (transport_recv(&msg) > 0){
         ii += 1;
-        //printf("PF: purging: %s\n", msg);
+        //printf("TrI: purging: %s\n", msg);
     }
-    if (ii) printf("PF: Purged: %i messages\n", ii);
+    if (ii) printf("TrI: Purged: %i messages\n", ii);
 
     return 0;
 }
 int transport_recv(uint8_t **msg){
     msglen = msgrcv(msgid_rcv, &rcv_buffer, sizeof(rcv_buffer), 1, IPC_NOWAIT);
-    //printf("PF:Transport Received %i bytes: `%s`\n", msglen, rcv_buffer.mesg_text);
+    //printf("TrI:Transport Received %i bytes: `%s`\n", msglen, rcv_buffer.mesg_text);
     if (msglen == 0){
         msgctl(msgid_rcv, IPC_RMID, NULL);
-        printf("PF:Message queue destroyed\n");
+        printf("TrI:Message queue destroyed\n");
     }
     *msg = (rcv_buffer.mesg_text);
     return msglen; 

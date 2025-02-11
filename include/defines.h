@@ -2,7 +2,6 @@
 */
 #ifndef DEFINES_H
 #define DEFINES_H
-#define VERSION "0.3.0 2025-02-09"
 #include "../../tinycbor/src/cbor.h"
 
 #define PLATFORM_LINUX 1
@@ -51,9 +50,8 @@ void encode_error(CborEncoder* encoder, const char* key, const char* value);
 //``````````````````Firmware-specific functions````````````````````````````````
 //  entries for main loop
 int plant_init();
-int plant_processing();
-void plant_periodic_update();
-
+int plant_update();
+void plant_process_request(const uint8_t* msg, int msglen);
 //  Plant's internal functions
 int parm_init_reply(CborEncoder* encoder);
 int parm_info(const char* parmName);

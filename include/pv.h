@@ -115,7 +115,7 @@ void encode_shape(CborEncoder* encoder, uint32_t* shape){
 }
 void encode_taggedBuffer(CborEncoder* encoder, uint32_t tag, 
         const void* byteString, int n){
-    if(DBG>=1) printf(">tagged buffer %i %i\n", tag, n);
+    if(DBG>=2) printf(">tagged buffer %i %i\n", tag, n);
     cbor_encode_tag(encoder, (CborTag)tag);
     cbor_encode_byte_string(encoder, (const uint8_t*) byteString, n);
 }
@@ -281,7 +281,7 @@ class PV { // Parameter object
         return 0;
     }
     CborError val2cbor(CborEncoder *pencoder){
-        if(DBG>=1)printf(">val2cbor\n");
+        if(DBG>=2)printf(">val2cbor\n");
         CborEncoder map_values;
         CborError r;
         r = cbor_encode_text_stringz(pencoder, name);
@@ -427,7 +427,7 @@ static PV* pvof(const char* pvname){
 	return pv;
 }
 static int reply_value(const char* pvname){
-    if(DBG>=1)printf(">reply_value %s\n", pvname);
+    if(DBG>=2)printf(">reply_value %s\n", pvname);
 	PV* pv = pvof(pvname);
 	if (pv == NULL){
         return CborNoError;

@@ -6,7 +6,7 @@
 #include <time.h>
 #include "../include/defines.h"
 #include "../include/pv.h"
-
+#include "../include/transport.h"
 //``````````````````Definitions````````````````````````````````````````````````
 #define mega 1000000
 #define TTY_BAUDRATE 7372800
@@ -17,14 +17,32 @@
 #define MCU_STM32 'G'
 #define MCU_CORE "431"
 //#define MCU_VERSION "{\"MCU\":\"" MCU_FAMILY MCU_CORE"\", \"soft\":\"" VERSION"\", \"clock\":" STRINGIZE(SYSCLK) ", \"baudrate\":" STRINGIZE(TTY_BAUDRATE) "}"
-#define MCU_VERSION "MCU: " MCU_FAMILY MCU_CORE ", soft:" VERSION ", clock:" STRINGIZE(SYSCLK) ",baudrate:" STRINGIZE(TTY_BAUDRATE)
+#define MCU_VERSION "MCU: " MCU_FAMILY MCU_CORE ", clock:" STRINGIZE(SYSCLK) ",baudrate:" STRINGIZE(TTY_BAUDRATE)
 #define ADC_Max_nChannels 8
 #define ADC_Max_nSamples 1000
 #define ADC_Max_value 4095
 
+
+//`````````````````Global variables```````````````````````````````````````````
+uint8_t DBG = 1; // Debugging verbosity level, 3 is highest. Could be changed in firmvare 
+extern char* VERSION;
+//`````````````````File-scope variables
+static uint16_t LoopReportMS = 10000;
+static uint32_t requests_received = 0;
+static uint32_t requests_received_since_last_periodic = 0;
+static struct timespec ptimer_start, ptimer_end;
 //``````````````````Helper functions```````````````````````````````````````````
 int mssleep(long miliseconds);// from defines
-
+static bool has_periodic_interval_elapsed(){
+    clock_gettime(CLOCK_REALTIME, &ptimer_end);
+    int dms =   (ptimer_end.tv_sec - ptimer_start.tv_sec)*1000 +\
+                (ptimer_end.tv_nsec - ptimer_start.tv_nsec)/1000000;
+    if (dms < LoopReportMS)
+        return false;
+    ptimer_start.tv_sec = ptimer_end.tv_sec;
+    ptimer_start.tv_nsec = ptimer_end.tv_nsec;
+    return true;
+}
 //``````````````````Memory for array parameters````````````````````````````````
 static int16_t adc_offsets[] = {1, 2, 3, 32000, -32000, 16, 17, 18};
 static uint32_t perf[] = {0, 0}; 
@@ -69,7 +87,7 @@ static PV* _PVs[] = {
 };
 //,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
 static uint16_t adc_samples[ADC_Max_nChannels*ADC_Max_nSamples];
-void update_adcs(uint32_t base){
+static void update_adcs(uint32_t base){
     int nsamples = pv_adc_reclen.value.u2;
     for (uint32_t iadc=0; iadc<pv_adc.shape[0]; iadc++){
         for (uint32_t ii=0; ii<pv_adc.shape[1]; ii++){
@@ -125,16 +143,17 @@ int plant_init(){
     }
     pv_adc.set(adc_samples);
     PVs = _PVs;
-    return (sizeof(_PVs)/sizeof(PV*));
+    NPV = (sizeof(_PVs)/sizeof(PV*));
+    return NPV;
 }
-extern uint32_t trig_count;
-void plant_periodic_update(){
-    if(DBG>=1)printf("plant_periodic_update @ %i s, host_rps=%i\n",host_rps_time[0],host_rps);
+static uint32_t trig_count;
+static void periodic_update(){
+    if(DBG>=1)printf("periodic_update @ %i s, host_rps=%i, run: %s\n",
+        host_rps_time[0], host_rps, pv_run.value.str);
     perf[TRIG_COUNT] = trig_count;
     perf[HOST_RPS] = host_rps;
     pv_perf.timestamp.tv_sec = host_rps_time[0];
     pv_perf.timestamp.tv_nsec = host_rps_time[1];
-    if(DBG>=1)printf("run: %s\n",pv_run.value.str);
 }
 
 /*extern struct timespec ptimer_end;
@@ -161,20 +180,20 @@ bool is_triggered(uint interval_msec){
 void init_encoder(bool subscription);
 void close_encoder();
 void send_encoded_buffer();
-extern bool client_alive;
+extern bool plant_client_alive;
 
-void subscriptionDelivery(){
+static void subscriptionDelivery(){
     init_encoder(true);
     reply_value("adc");
     close_encoder();
     send_encoded_buffer();
 }
-//,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
-int plant_processing()
+int plant_update()
+// Called to update process variables
 {
     if (pv_sleep.value.u2 != 0){
         mssleep(pv_sleep.value.u2);}
-    if (not client_alive){
+    if (not plant_client_alive){
         return 0;}
     
     //if (is_triggered(10)){
@@ -188,4 +207,55 @@ int plant_processing()
     }
     return 0;
 }
+//,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+//`````````````````Main loop``````````````````````````````````````````````````
+int main(){
+{
+    printf("Plant version %s\n",VERSION);
+    int msglen = 1;
+    uint8_t *msg = NULL;
+    int cycle_count = 0;
+    int cycle_count_prev = 0;
 
+    plant_init();
+    if (NPV == 0){
+        printf("ERR: no parameters served\n");
+        return 1;
+    }
+    printf("Defined %i parameters\n", NPV);
+    if (transport_init()) exit(1);
+    clock_gettime(CLOCK_REALTIME, &ptimer_start);
+
+    // Main loop
+    while (msglen != 0){
+        cycle_count++;
+
+        if (has_periodic_interval_elapsed()){
+            host_rps = (cycle_count - cycle_count_prev)*1000/LoopReportMS;
+            host_rps_time[0] = ptimer_end.tv_sec;
+            host_rps_time[1] = ptimer_end.tv_nsec;
+            printf("ADC:rps=%i reqs:%u,%u, trig:%u client:%i\n",host_rps, requests_received, requests_received_since_last_periodic, trig_count, plant_client_alive);
+            periodic_update();
+            cycle_count_prev = cycle_count;
+            if (requests_received == requests_received_since_last_periodic){
+                if (plant_client_alive == true){
+                    printf("ADC:Client have been disconnected.\n");}
+                plant_client_alive = false;
+            }            requests_received_since_last_periodic = requests_received;
+        }
+
+        // check if request arrived from the client
+        msglen = transport_recv(&msg);
+        if (msglen == -1){ // no requests
+            plant_update();
+            continue;
+        }
+
+        requests_received++;
+        if (plant_client_alive == false){
+            printf("ADC:Client is re-connected.\n");}
+        plant_client_alive = true;
+        plant_process_request(msg, msglen);
+    }
+return 0;
+}}

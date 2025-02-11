@@ -4,6 +4,7 @@ Supported commands: info, get, set.
 The 'subscribe' command is considered unnecessary. The 'run start/stop' should
 handle the subscription activation.
 */
+const char* VERSION = "0.4.0 2025-02-09";
 #include <stdio.h>
 #include <stdlib.h>
 #include <time.h>
@@ -13,16 +14,11 @@ handle the subscription activation.
 #include "../include/transport.h"
 
 //``````````````````Globals````````````````````````````````````````````````````
-#define LoopReportMS 10000 //Interval in ms between loop reporting
-uint8_t DBG = 1;// Debugging verbosity level, 3 is highest. Could be changed in firmvare 
+extern uint8_t DBG; // Defined in main program
 uint16_t NPV = 0;// Number of parameters
-struct timespec ptimer_start, ptimer_end;
-uint32_t cycle_count = 0;
-uint32_t trig_count = 0;
 uint32_t host_rps = 0;// performance monnitor: rounds/seconds
 uint32_t host_rps_time[2] = {0,0}; //timestamp
-bool client_alive = true;// if not, then subscription will be suspended
-static uint32_t requests_received = 0;
+bool plant_client_alive = true;// if not, then subscription will be suspended
 static uint32_t transport_send_failure = 0;
 //,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
 // cbor_parser storage 
@@ -62,7 +58,7 @@ static int parm_dispatch(int cmd, const char* parmName, CborValue* value=NULL){
     {                                                                             \
         if ((a) != CborNoError)                                                   \
         {                                                                         \
-            printf("PM:ERR:%s ",str);                                                \
+            printf("P2P:ERR:%s ",str);                                                \
             ret = ret_value;                                                      \
             goto goto_tag;                                                        \
         }                                                                         \
@@ -177,7 +173,7 @@ static CborError parse_cbor_buffer(CborValue *it, int nestingLevel)
                     parm_cmd = PARM_CMD_SUBSCRIBE;*/
                 }else{
                     //CBOR_CHECK(1, "Wrong command", err, ret);
-                    printf("PM:ERR: Wrong command `%s`\n",buf);
+                    printf("P2P:ERR: Wrong command `%s`\n",buf);
                     cbor_encode_text_stringz(&branch_encoder, "ERR: Wrong command");
                     return CborUnknownError;
                 }
@@ -272,17 +268,6 @@ err:
 }
 //,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
 //``````````````````Main loop helper functions`````````````````````````````````
-static uint32_t requests_received_since_last_periodic = 0;
-bool has_periodic_interval_elapsed(){
-    clock_gettime(CLOCK_REALTIME, &ptimer_end);
-    int dms =   (ptimer_end.tv_sec - ptimer_start.tv_sec)*1000 +\
-                (ptimer_end.tv_nsec - ptimer_start.tv_nsec)/1000000;
-    if (dms < LoopReportMS)
-        return false;
-    ptimer_start.tv_sec = ptimer_end.tv_sec;
-    ptimer_start.tv_nsec = ptimer_end.tv_nsec;
-    return true;
-}
 void init_encoder(bool subscription=false){
     cbor_encoder_init(&root_encoder, encoder_buf, sizeof(encoder_buf), 0);
     cbor_encoder_create_array(&root_encoder, &branch_encoder, CborIndefiniteLength);
@@ -295,7 +280,7 @@ void close_encoder(){
 void send_encoded_buffer(){
     CborValue it;
     int buflen = cbor_encoder_get_buffer_size(&root_encoder, encoder_buf);
-    if(DBG>=2) printf("PM:encoded buffer size %i:\n", buflen);
+    if(DBG>=2) printf("P2P:encoded buffer size %i:\n", buflen);
     if (buflen == 0)
         return;
     if(DBG>=2){
@@ -306,16 +291,16 @@ void send_encoded_buffer(){
     int r = transport_send(encoder_buf, buflen);
     if (r == 0){
         transport_send_failure = 0;
-        if(DBG>=2)printf("PM:Replied: ");
+        if(DBG>=2)printf("P2P:Replied: ");
         cbor_parser_init((const uint8_t*) encoder_buf, buflen, 0, &root_parser, &it);
         if(DBG>=2)cbor_value_to_json(stdout, &it, 0);
         if(DBG>=2)printf("\n");
     }else{
         transport_send_failure++;
-        printf("PM:ERROR:transport_send_failure # %i\n", transport_send_failure);
-        if (client_alive && transport_send_failure>2){
-            printf("PM:Client have been disconnected due to transport_send_failure.\n");
-            client_alive = false;
+        printf("P2P:ERROR:transport_send_failure # %i\n", transport_send_failure);
+        if (plant_client_alive && transport_send_failure>2){
+            printf("P2P:Client have been disconnected due to transport_send_failure.\n");
+            plant_client_alive = false;
         }
     }
 }
@@ -323,14 +308,14 @@ void plant_process_request(const uint8_t* msg, int msglen){
     CborValue it;
 
     if(DBG>=2){
-        printf("\nPM:Received %i bytes:\n", msglen);
+        printf("\nP2P:Received %i bytes:\n", msglen);
         dumpbytes(msg, msglen);
         printf("\n");
     }
     // Parse incoming message
     cbor_parser_init(msg, msglen, 0, &root_parser, &it);
     if(DBG>=1){
-        printf("PM:Request received: ");
+        printf("P2P:Request received: ");
         // Dump the values in JSON format
         cbor_value_to_json(stdout, &it, 0);
         puts("\n");}
@@ -346,53 +331,4 @@ void plant_process_request(const uint8_t* msg, int msglen){
     if(DBG>=2) puts(",,,,,,,,,,,,,,,,,,,,Parsing finished");
     send_encoded_buffer();
 }
-//`````````````````````````````````````````````````````````````````````````````
-int main() 
-{
-    printf("PM:Version %s\n",VERSION);
-    int msglen = 1;
-    uint8_t *msg = NULL;
-    int cycle_count_prev = 0;
 
-    NPV = plant_init();
-    if (NPV == 0){
-        printf("ERR: no parameters served\n");
-        return 1;
-    }
-    printf("Defined %i parameters\n", NPV);
-    if (transport_init()) exit(1);
-    clock_gettime(CLOCK_REALTIME, &ptimer_start);
-
-    // Main loop
-    while (msglen != 0){
-        cycle_count++;
-
-        if (has_periodic_interval_elapsed()){
-            host_rps = (cycle_count - cycle_count_prev)*1000/LoopReportMS;
-            host_rps_time[0] = ptimer_end.tv_sec;
-            host_rps_time[1] = ptimer_end.tv_nsec;
-            printf("PM:rps=%i reqs:%u,%u, trig:%u client:%i\n",host_rps, requests_received, requests_received_since_last_periodic, trig_count, client_alive);
-            plant_periodic_update();
-            cycle_count_prev = cycle_count;
-            if (requests_received == requests_received_since_last_periodic){
-                if (client_alive == true){
-                    printf("PM:Client have been disconnected.\n");}
-                client_alive = false;
-            }            requests_received_since_last_periodic = requests_received;
-        }
-
-        // check if request arrived from the client
-        msglen = transport_recv(&msg);
-        if (msglen == -1){ // no requests
-            plant_processing();
-            continue;
-        }
-
-        requests_received++;
-        if (client_alive == false){
-            printf("PM:Client is re-connected.\n");}
-        client_alive = true;
-        plant_process_request(msg, msglen);
-    }
-return 0;
-}
