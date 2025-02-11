@@ -4,7 +4,7 @@ Supported commands: info, get, set.
 The 'subscribe' command is considered unnecessary. The 'run start/stop' should
 handle the subscription activation.
 */
-const char* VERSION = "0.4.0 2025-02-09";
+const char* VERSION = "0.4.1 2025-02-11";
 #include <stdio.h>
 #include <stdlib.h>
 #include <time.h>
@@ -16,8 +16,6 @@ const char* VERSION = "0.4.0 2025-02-09";
 //``````````````````Globals````````````````````````````````````````````````````
 extern uint8_t DBG; // Defined in main program
 uint16_t NPV = 0;// Number of parameters
-uint32_t host_rps = 0;// performance monnitor: rounds/seconds
-uint32_t host_rps_time[2] = {0,0}; //timestamp
 bool plant_client_alive = true;// if not, then subscription will be suspended
 static uint32_t transport_send_failure = 0;
 //,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
