@@ -5,8 +5,11 @@ Server, which hosts process variables for point-to-point communications with a c
 TinyCBOR: https://github.com/intel/tinycbor
 
 ## Build
-make
+`make`
 
-# Examples
-See https://github.com/ASukhanov/P2PlantAccess
+# Example
+Run simulated 8-channel ADC:<br>
+`bin/simulatedADCs`
+
+For access see: https://github.com/ASukhanov/P2PlantAccess
 
