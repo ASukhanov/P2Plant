@@ -4,10 +4,9 @@ Supported commands: info, get, set.
 The 'subscribe' command is considered unnecessary. The 'run start/stop' should
 handle the subscription activation.
 */
-const char* VERSION = "0.4.1 2025-02-11";
+const char* VERSION = "0.5.0 2025-02-14";//removed IPC_NOWAIT from msgsnd
 #include <stdio.h>
-#include <stdlib.h>
-#include <time.h>
+#include <stdlib.h>// for free()
 
 #include "../include/defines.h"
 #include "../../tinycbor/src/cborjson.h"
@@ -285,19 +284,23 @@ void send_encoded_buffer(){
         for (int i=0; i<buflen; i++){
             printf("%i,",encoder_buf[i]);}
     }
-    if(DBG>=2) printf("\n");
+    //printf("P2P >send\n");
+    // Program will be blocked if client exits. T
     int r = transport_send(encoder_buf, buflen);
+    if(DBG>=2) printf("P2P <sent\n");
     if (r == 0){
         transport_send_failure = 0;
-        if(DBG>=2)printf("P2P:Replied: ");
-        cbor_parser_init((const uint8_t*) encoder_buf, buflen, 0, &root_parser, &it);
-        if(DBG>=2)cbor_value_to_json(stdout, &it, 0);
-        if(DBG>=2)printf("\n");
+        if(DBG>=2){
+            printf("P2P:Replied: ");
+            cbor_parser_init((const uint8_t*) encoder_buf, buflen, 0, &root_parser, &it);
+            cbor_value_to_json(stdout, &it, 0);
+            printf("\n");
+        }
     }else{
         transport_send_failure++;
-        printf("P2P:ERROR:transport_send_failure # %i\n", transport_send_failure);
-        if (plant_client_alive && transport_send_failure>2){
-            printf("P2P:Client have been disconnected due to transport_send_failure.\n");
+        printf("WARNING_P2P:transport_send_failure # %i\n", transport_send_failure);
+        if (plant_client_alive && transport_send_failure > 100){
+            printf("ERROR_P2P:Client have been disconnected due to transport_send_failure.\n");
             plant_client_alive = false;
         }
     }
