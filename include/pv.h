@@ -1,4 +1,6 @@
-/*``````````````````Definition of Process Variables```````````````````````````` 
+/*``````````````````Implementation of Process Variables````````````````````````
+ * Most of the functions are defined in this header file.
+ * Such layout is best suited for implementation on microcontrollers.
  */
 #ifndef PV_H
 #define PV_H
@@ -442,8 +444,7 @@ static int reply_info(const char* pvname){
         cbor_encoder_create_map(pRootEncoder, &alist, NPV);
         for (int i=0; i < NPV; i++){
             if(DBG>=2)printf("encode %s\n",PVs[i]->name);
-            cbor_encode_text_stringz(&alist, PVs[i]->name);
-            cbor_encode_text_stringz(&alist, PVs[i]->desc);
+            PVs[i]->info2cbor(&alist);
         }
         cbor_encoder_close_container(pRootEncoder, &alist);
         return 0;
