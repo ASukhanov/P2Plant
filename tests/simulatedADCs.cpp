@@ -1,6 +1,6 @@
 /*Parameter server firmware of the emulated MCUFEC.
  */
-#define ParmSimulator_VERSION "0.4.1 2025-02-11"// re-factored
+#define ParmSimulator_VERSION "0.5.0 2025-02-12"// adc renamed to adcs, adc0 added. Timestamping of ADCs.
 #include <stdio.h>
 #include <stdlib.h>
 #include <time.h>
@@ -24,7 +24,7 @@
 
 
 //`````````````````Global variables```````````````````````````````````````````
-uint8_t DBG = 1; // Debugging verbosity level, 3 is highest. Could be changed in firmvare 
+uint8_t DBG = 0; // Debugging verbosity level, 3 is highest. Could be changed in firmvare
 extern char* VERSION;
 //`````````````````File-scope variables
 static uint16_t LoopReportMS = 10000;
@@ -70,8 +70,10 @@ static PV pv_adc_reclen = {"adc_reclen",
     "Record length. Number of samples of each ADC", T_u2, F_WE};
 static PV pv_adc_srate = {"adc_srate",
     "Sampling rate of ADCs", T_u4, F_WE, "Hz"};
-static PV pv_adc = {"adc",
+static PV pv_adcs = {"adcs",
     "Two-dimentional array[adc#][samples] of ADC samples", T_u2ptr, F_R, "counts"};
+static PV pv_adc0 = {"adc0",
+    "Samples of ADC[0]", T_u2ptr, F_R, "counts"};
 //,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
 static PV* _PVs[] = {
   &pv_version,
@@ -82,21 +84,24 @@ static PV* _PVs[] = {
   &pv_adc_offsets,
   &pv_adc_reclen,
   &pv_adc_srate,
-  &pv_adc,
+  &pv_adcs,
+  &pv_adc0,
 };
 //,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
 static uint16_t adc_samples[ADC_Max_nChannels*ADC_Max_nSamples];
 static void update_adcs(uint32_t base){
     int nsamples = pv_adc_reclen.value.u2;
     // Update ADC data
-    for (uint32_t iadc=0; iadc<pv_adc.shape[0]; iadc++){
-        for (uint32_t ii=0; ii<pv_adc.shape[1]; ii++){
-            adc_samples[iadc*nsamples + ii] = (base+iadc+ii) % pv_adc.shape[1];
+    for (uint32_t iadc=0; iadc<pv_adcs.shape[0]; iadc++){
+        for (uint32_t ii=0; ii<pv_adcs.shape[1]; ii++){
+            adc_samples[iadc*nsamples + ii] = (base+iadc+ii) % pv_adcs.shape[1];
         }
     }
     // Update ADC timestamp
-    pv_adc.timestamp.tv_sec = ptimer_now.tv_sec;
-    pv_adc.timestamp.tv_nsec = ptimer_now.tv_nsec;
+    pv_adcs.timestamp.tv_sec = ptimer_now.tv_sec;
+    pv_adcs.timestamp.tv_nsec = ptimer_now.tv_nsec;
+    pv_adc0.timestamp.tv_sec = ptimer_now.tv_sec;
+    pv_adc0.timestamp.tv_nsec = ptimer_now.tv_nsec;
 }
 //``````````````````Setters````````````````````````````````````````````````````
 int pv_debug_setter(){
@@ -133,24 +138,26 @@ int plant_init(){
     pv_adc_reclen.set(80);
     pv_adc_srate.set(100000);
     int nsamples = pv_adc_reclen.value.u2;
-    pv_adc.set_shape(nch, nsamples);
+    pv_adcs.set_shape(nch, nsamples);
+    pv_adc0.set_shape(nsamples);
     update_adcs(0);
     if(DBG>=2){ 
         printf("ADC:\n");
         int16_t* i2idx = (int16_t*)(adc_samples);
-        for (uint32_t ii = 0; ii<(pv_adc.shape[0]*pv_adc.shape[1]); ii++){
+        for (uint32_t ii = 0; ii<(pv_adcs.shape[0]*pv_adcs.shape[1]); ii++){
             printf("%3i,",*i2idx++);
         }
         printf("\n");
     }
-    pv_adc.set(adc_samples);
+    pv_adcs.set(adc_samples);
+    pv_adc0.set(adc_samples);
     PVs = _PVs;
     NPV = (sizeof(_PVs)/sizeof(PV*));
     return NPV;
 }
 static uint32_t trig_count;
 static void periodic_update(){
-    if(DBG>=1)printf("periodic_update @ %i s, host_rps=%i, run: %s\n",
+    if(DBG>=1)printf("periodic_update @ %li s, host_rps=%i, run: %s\n",
         ptimer_now.tv_sec, host_rps, pv_run.value.str);
     perf[TRIG_COUNT] = trig_count;
     perf[HOST_RPS] = host_rps;
@@ -186,7 +193,9 @@ extern bool plant_client_alive;
 
 static void subscriptionDelivery(){
     init_encoder(true);
-    reply_value("adc");
+    reply_value("adcs");
+    //reply_value("adc0");//This is not necessary as adc0 is boud to same address as adcs
+    //TODO: How to deliver multiple parameters?
     close_encoder();
     send_encoded_buffer();
 }
