@@ -58,5 +58,5 @@ int transport_recv(uint8_t **msg){
 }
 int transport_send(uint8_t *msg, size_t msgsz){
     memcpy(rcv_buffer.mesg_text, msg, msgsz);
-    return msgsnd(msgid_snd, &rcv_buffer, msgsz, IPC_NOWAIT);
+    return msgsnd(msgid_snd, &rcv_buffer, msgsz, 0);//, IPC_NOWAIT);
 }
