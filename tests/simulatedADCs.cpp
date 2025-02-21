@@ -1,6 +1,6 @@
 /*Parameter server firmware of the emulated MCUFEC.
  */
-#define ParmSimulator_VERSION "0.5.0 2025-02-12"// adc renamed to adcs, adc0 added. Timestamping of ADCs.
+#define ParmSimulator_VERSION "0.5.1 2025-02-21"//Deliver 2 PVs, ADC0 and perf
 #include <stdio.h>
 #include <stdlib.h>
 #include <time.h>
@@ -22,9 +22,8 @@
 #define ADC_Max_nSamples 1000
 #define ADC_Max_value 4095
 
-
 //`````````````````Global variables```````````````````````````````````````````
-uint8_t DBG = 0; // Debugging verbosity level, 3 is highest. Could be changed in firmvare
+uint8_t DBG = 0; // Debugging verbosity level, 3 is highest. Could be changed remotely through pv_debug
 extern char* VERSION;
 //`````````````````File-scope variables
 static uint16_t LoopReportMS = 10000;
@@ -104,16 +103,17 @@ static void update_adcs(uint32_t base){
     pv_adc0.timestamp.tv_nsec = ptimer_now.tv_nsec;
 }
 //``````````````````Setters````````````````````````````````````````````````````
-int pv_debug_setter(){
+static int pv_debug_setter(){
     DBG = pv_debug.value.u2;
     printf(">pv_debug_setter %i \n", DBG);
     return 0;
 }
 //``````````````````Command handlers```````````````````````````````````````````
-static uint32_t host_rps;// defined in parmfirm
+static uint32_t host_rps;
 extern PV** PVs;
 int plant_init(){
-    // Initialize parameters, return number of parameters served
+    //Called from p2plant.cpp to initialize hardware and create PVs.
+    //Returns number of parameters served
     printf("ParmSimulator %s\n", ParmSimulator_VERSION);
     pv_version.set(MCU_VERSION);
     printf("pv_version: %s\n", pv_version.value.str);
@@ -185,7 +185,7 @@ bool is_triggered(uint interval_msec){
     return r;
 }
 */
-// defined in parmain
+// function from p2plant.cpp()
 void init_encoder(bool subscription);
 void close_encoder();
 void send_encoded_buffer();
@@ -193,9 +193,9 @@ extern bool plant_client_alive;
 
 static void subscriptionDelivery(){
     init_encoder(true);
-    reply_value("adcs");
-    //reply_value("adc0");//This is not necessary as adc0 is boud to same address as adcs
-    //TODO: How to deliver multiple parameters?
+    reply_value("perf");
+    //reply_value("adcs");
+    reply_value("adc0");//This is not necessary as adc0 is bound to same address as adcs
     close_encoder();
     send_encoded_buffer();
 }
