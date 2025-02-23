@@ -1,37 +1,31 @@
-/*Parameter server firmware of the emulated MCUFEC.
+/*P2Plqnt implementation of simulated 8-channel ADC.
  */
-#define ParmSimulator_VERSION "0.5.1 2025-02-21"//Deliver 2 PVs, ADC0 and perf
+#define _VERSION "0.4.2 2025-02-23"// re-factored
 #include <stdio.h>
 #include <stdlib.h>
 #include <time.h>
 #include "../include/defines.h"
 #include "../include/pv.h"
 #include "../include/transport.h"
-//``````````````````Definitions````````````````````````````````````````````````
+//``````````````````Definitions```````````````````````````````````````````````
 #define mega 1000000
-#define TTY_BAUDRATE 7372800
-#define SYSCLK 170000000 //system clock, Hz
-#define STRINGIZE_NX(A) #A
-#define STRINGIZE(A) STRINGIZE_NX(A)
-#define MCU_FAMILY "STM32G"
-#define MCU_STM32 'G'
-#define MCU_CORE "431"
-//#define MCU_VERSION "{\"MCU\":\"" MCU_FAMILY MCU_CORE"\", \"soft\":\"" VERSION"\", \"clock\":" STRINGIZE(SYSCLK) ", \"baudrate\":" STRINGIZE(TTY_BAUDRATE) "}"
-#define MCU_VERSION "MCU: " MCU_FAMILY MCU_CORE ", clock:" STRINGIZE(SYSCLK) ",baudrate:" STRINGIZE(TTY_BAUDRATE)
 #define ADC_Max_nChannels 8
 #define ADC_Max_nSamples 1000
 #define ADC_Max_value 4095
 
+
 //`````````````````Global variables```````````````````````````````````````````
-uint8_t DBG = 0; // Debugging verbosity level, 3 is highest. Could be changed remotely through pv_debug
+uint8_t DBG = 0; // Debugging verbosity level, 3 is highest.
 extern char* VERSION;
+
 //`````````````````File-scope variables
 static uint16_t LoopReportMS = 10000;
 static uint32_t requests_received = 0;
 static uint32_t requests_received_since_last_periodic = 0;
 static struct timespec ptimer_last_update, ptimer_now;
-//``````````````````Helper functions```````````````````````````````````````````
-int mssleep(long miliseconds);// from defines
+
+//``````````````````Helper functions``````````````````````````````````````````
+int mssleep(long miliseconds);// defined in helpers.
 static bool has_periodic_interval_elapsed(){
     int dms =   (ptimer_now.tv_sec - ptimer_last_update.tv_sec)*1000 +\
                 (ptimer_now.tv_nsec - ptimer_last_update.tv_nsec)/1000000;
@@ -41,28 +35,29 @@ static bool has_periodic_interval_elapsed(){
     ptimer_last_update.tv_nsec = ptimer_now.tv_nsec;
     return true;
 }
-//``````````````````Memory for array parameters````````````````````````````````
+//``````````````````Memory for array parameters```````````````````````````````
 static int16_t adc_offsets[] = {1, 2, 3, 32000, -32000, 16, 17, 18};
 static uint32_t perf[] = {0, 0}; 
 enum PERFITEM {
     TRIG_COUNT,
     HOST_RPS,
 };
-//``````````````````Definitions of PVs`````````````````````````````````````````
-// They are initialized in the main()
+//``````````````````Definitions of PVs````````````````````````````````````````
+// Mandatory PVs
 static PV pv_version = {"version",
-    "MCU and software version, system clock", T_str, F_R};
-//PV pv_clock =   {"clock", "System clock", 	T_u4, 1, F_R, "Hz"};
+    "simulatedADCs version", T_str, F_R};
+static PV pv_run = 	{"run",
+    "Start/Stop the streaming of measurements", T_str, F_WED};
+
+// Auxiliary PVs
 static PV pv_debug = {"debug",
     "Show debugging messages", 	T_B, F_WEI};
-static PV pv_run = 	{"run",
-    "For experts. Start/Stop board peripherals except ADCs", T_str, F_WED};
 static PV pv_sleep = 	{"sleep",
     "Sleep in the program loop", T_u4, F_R, "ms"};
 static PV pv_perf = {"perf",
     "Performance counters. TrigCount, RPS in main loop", T_u4ptr, F_RI};
 
-//``````````````````ADCs```````````````````````````````````````````````````````
+// ADC-related PVs
 static PV pv_adc_offsets = {"adc_offsets",// not implemented in MCUFEC
     "Offsets of all ADC channels", T_i2ptr, F_WE, "counts"};
 static PV pv_adc_reclen = {"adc_reclen",
@@ -71,22 +66,21 @@ static PV pv_adc_srate = {"adc_srate",
     "Sampling rate of ADCs", T_u4, F_WE, "Hz"};
 static PV pv_adcs = {"adcs",
     "Two-dimentional array[adc#][samples] of ADC samples", T_u2ptr, F_R, "counts"};
-static PV pv_adc0 = {"adc0",
-    "Samples of ADC[0]", T_u2ptr, F_R, "counts"};
-//,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+
+// List of active PVs
 static PV* _PVs[] = {
   &pv_version,
-  &pv_debug,
   &pv_run,
+  &pv_debug,
   &pv_sleep,
   &pv_perf,
   &pv_adc_offsets,
   &pv_adc_reclen,
   &pv_adc_srate,
   &pv_adcs,
-  &pv_adc0,
 };
 //,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+// Update ADCs, Called every cycle.
 static uint16_t adc_samples[ADC_Max_nChannels*ADC_Max_nSamples];
 static void update_adcs(uint32_t base){
     int nsamples = pv_adc_reclen.value.u2;
@@ -99,8 +93,17 @@ static void update_adcs(uint32_t base){
     // Update ADC timestamp
     pv_adcs.timestamp.tv_sec = ptimer_now.tv_sec;
     pv_adcs.timestamp.tv_nsec = ptimer_now.tv_nsec;
-    pv_adc0.timestamp.tv_sec = ptimer_now.tv_sec;
-    pv_adc0.timestamp.tv_nsec = ptimer_now.tv_nsec;
+}
+// Periodic update. Called every 10 s.
+static uint32_t host_rps;
+static uint32_t trig_count;
+static void periodic_update(){
+    if(DBG>=1)printf("periodic_update @ %i s, host_rps=%i, run: %s\n",
+        ptimer_now.tv_sec, host_rps, pv_run.value.str);
+    perf[TRIG_COUNT] = trig_count;
+    perf[HOST_RPS] = host_rps;
+    pv_perf.timestamp.tv_sec = ptimer_now.tv_sec;
+    pv_perf.timestamp.tv_nsec = ptimer_now.tv_nsec;
 }
 //``````````````````Setters````````````````````````````````````````````````````
 static int pv_debug_setter(){
@@ -108,17 +111,19 @@ static int pv_debug_setter(){
     printf(">pv_debug_setter %i \n", DBG);
     return 0;
 }
-//``````````````````Command handlers```````````````````````````````````````````
-static uint32_t host_rps;
-extern PV** PVs;
+// Necessary functions, defined in p2plant
+extern void init_encoder(bool subscription);
+extern void close_encoder();
+extern void send_encoded_buffer();
+extern bool plant_client_alive;
+//,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+//`````````````````Entries for main loop``````````````````````````````````````
 int plant_init(){
-    //Called from p2plant.cpp to initialize hardware and create PVs.
-    //Returns number of parameters served
-    printf("ParmSimulator %s\n", ParmSimulator_VERSION);
-    pv_version.set(MCU_VERSION);
+    // Called to initialize PVs, return number of PVs served.
+    printf("simulatedADCs %s\n",_VERSION);
+    pv_version.set(_VERSION);
     printf("pv_version: %s\n", pv_version.value.str);
 
-    //``````````````Initialization of parameters
     pv_run.set("stop");
     pv_run.legalValues = (char*)"start,stop";
     pv_sleep.opLow = 0;
@@ -139,7 +144,6 @@ int plant_init(){
     pv_adc_srate.set(100000);
     int nsamples = pv_adc_reclen.value.u2;
     pv_adcs.set_shape(nch, nsamples);
-    pv_adc0.set_shape(nsamples);
     update_adcs(0);
     if(DBG>=2){ 
         printf("ADC:\n");
@@ -150,57 +154,12 @@ int plant_init(){
         printf("\n");
     }
     pv_adcs.set(adc_samples);
-    pv_adc0.set(adc_samples);
     PVs = _PVs;
     NPV = (sizeof(_PVs)/sizeof(PV*));
     return NPV;
 }
-static uint32_t trig_count;
-static void periodic_update(){
-    if(DBG>=1)printf("periodic_update @ %li s, host_rps=%i, run: %s\n",
-        ptimer_now.tv_sec, host_rps, pv_run.value.str);
-    perf[TRIG_COUNT] = trig_count;
-    perf[HOST_RPS] = host_rps;
-    pv_perf.timestamp.tv_sec = ptimer_now.tv_sec;
-    pv_perf.timestamp.tv_nsec = ptimer_now.tv_nsec;
-}
-
-/*extern struct timespec ptimer_now;
-static struct timespec last = {0,0};
-bool is_triggered(uint interval_msec){
-    bool r = false;
-    //printf("t:%li,%li %li,%li, %i\n", ptimer_now.tv_sec, ptimer_now.tv_nsec,
-    //    last.tv_sec, last.tv_nsec, trig_count);
-    if (ptimer_now.tv_sec > last.tv_sec + interval_msec/1000){
-        r = true;
-    }else{
-        if (ptimer_now.tv_nsec > last.tv_nsec + interval_msec*1000000){
-            r = true;}
-    }
-    if (r == true){
-        last.tv_sec = ptimer_now.tv_sec;
-        last.tv_nsec = ptimer_now.tv_nsec;
-        //printf("True\n");
-    }
-    return r;
-}
-*/
-// function from p2plant.cpp()
-void init_encoder(bool subscription);
-void close_encoder();
-void send_encoded_buffer();
-extern bool plant_client_alive;
-
-static void subscriptionDelivery(){
-    init_encoder(true);
-    reply_value("perf");
-    //reply_value("adcs");
-    reply_value("adc0");//This is not necessary as adc0 is bound to same address as adcs
-    close_encoder();
-    send_encoded_buffer();
-}
 int plant_update()
-// Called to update process variables
+// Called to update PVs and stream them to client
 {
     if (pv_sleep.value.u2 != 0){
         mssleep(pv_sleep.value.u2);}
@@ -212,8 +171,18 @@ int plant_update()
         if(starts_with(pv_run.value.str, "start")){
             trig_count++;
             if(DBG>=1)printf("Trigger %u\n",trig_count);
+
             update_adcs(trig_count);
-            subscriptionDelivery();
+
+            //`````Stream PVs to client```````````````````````````````````````
+            init_encoder(true);
+            // Specify here which PVs (e.g. adcs and perf) to deliver.
+            // Function reply_value() is defined in pv.h
+            reply_value("adcs");
+            reply_value("perf");
+            close_encoder();
+            send_encoded_buffer();
+            //,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
         }
     }
     return 0;
