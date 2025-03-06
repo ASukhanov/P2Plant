@@ -429,12 +429,14 @@ static PV* pvof(const char* pvname){
 	return pv;
 }
 static int reply_value(const char* pvname){
+    CborError err;
     if(DBG>=2)printf(">reply_value %s\n", pvname);
 	PV* pv = pvof(pvname);
 	if (pv == NULL){
         return CborNoError;
 	}
-    return (int) (pv->val2cbor(pRootEncoder));
+	err = pv->val2cbor(pRootEncoder);
+    return err;
 }
 static int reply_info(const char* pvname){
     if (strcmp(pvname, "*") == 0){

@@ -1,16 +1,15 @@
-/*````````````````Base functions of a P2Plant.
+/*````````````````Base functions of the P2Plant.
 It supposed to run on a bare metal firmware (STM32 MCU, CommonPlatform hardware).
 Supported commands: info, get, set.
 The 'subscribe' command is considered unnecessary. The 'run start/stop' should
 handle the subscription activation.
 */
-const char* VERSION = "0.5.0 2025-02-14";//removed IPC_NOWAIT from msgsnd
+const char* VERSION = "1.0.0 2025-03-06";//major re-factoring
 #include <stdio.h>
 #include <stdlib.h>// for free()
 
 #include "../include/defines.h"
 #include "../../tinycbor/src/cborjson.h"
-#include "../include/transport.h"
 
 //``````````````````Globals````````````````````````````````````````````````````
 extern uint8_t DBG; // Defined in main program
@@ -18,8 +17,6 @@ uint16_t NPV = 0;// Number of parameters
 bool plant_client_alive = true;// if not, then subscription will be suspended
 static uint32_t transport_send_failure = 0;
 //,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
-// cbor_parser storage 
-static uint8_t encoder_buf[1500];
 //``````````````````Command handlers```````````````````````````````````````````
 
 enum PARM_COMMAND {// like in ADO architecture
@@ -265,8 +262,17 @@ err:
 }
 //,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
 //``````````````````Main loop helper functions`````````````````````````````````
-void init_encoder(bool subscription=false){
-    cbor_encoder_init(&root_encoder, encoder_buf, sizeof(encoder_buf), 0);
+uint8_t *encoder_buffer;
+uint32_t encoder_bufsize;
+
+void plant_init(uint8_t *buf, uint32_t bufsize){
+    encoder_buffer = buf;
+    encoder_bufsize = bufsize;
+}
+
+void init_encoder(bool subscription){
+    // Init encoder. If subscription is True then "Subscription" will be encoded on top.
+    cbor_encoder_init(&root_encoder, encoder_buffer, encoder_bufsize, 0);
     cbor_encoder_create_array(&root_encoder, &branch_encoder, CborIndefiniteLength);
     if(subscription){
         cbor_encode_text_stringz(&branch_encoder, "Subscription");}
@@ -274,39 +280,42 @@ void init_encoder(bool subscription=false){
 void close_encoder(){
     cbor_encoder_close_container(&root_encoder, &branch_encoder);
 }
-void send_encoded_buffer(){
+void send_encoded_buffer(uint8_t *buf){
     CborValue it;
-    int buflen = cbor_encoder_get_buffer_size(&root_encoder, encoder_buf);
+    size_t buflen = cbor_encoder_get_buffer_size(&root_encoder, buf);
+    assert(buflen < encoder_bufsize && "Buffer size too small");
     if(DBG>=2) printf("P2P:encoded buffer size %i:\n", buflen);
     if (buflen == 0)
         return;
     if(DBG>=2){
         for (int i=0; i<buflen; i++){
-            printf("%i,",encoder_buf[i]);}
+            printf("%i,",buf[i]);}
     }
-    //printf("P2P >send\n");
     // Program will be blocked if client exits. T
-    int r = transport_send(encoder_buf, buflen);
+    int r = transport_send(buf, buflen);
     if(DBG>=2) printf("P2P <sent\n");
     if (r == 0){
         transport_send_failure = 0;
         if(DBG>=2){
             printf("P2P:Replied: ");
-            cbor_parser_init((const uint8_t*) encoder_buf, buflen, 0, &root_parser, &it);
+            cbor_parser_init((const uint8_t*) buf, buflen, 0, &root_parser, &it);
             cbor_value_to_json(stdout, &it, 0);
             printf("\n");
         }
     }else{
         transport_send_failure++;
-        printf("WARNING_P2P:transport_send_failure # %i\n", transport_send_failure);
+        printf("WARNING_P2P:transport_send_failure %i # %i\n", r, transport_send_failure);
         if (plant_client_alive && transport_send_failure > 100){
             printf("ERROR_P2P:Client have been disconnected due to transport_send_failure.\n");
             plant_client_alive = false;
         }
     }
 }
+
 void plant_process_request(const uint8_t* msg, int msglen){
-    CborValue it;
+    //Should be called in the main loop
+    CborValue it;// for maintaining redundancy in CBOR functions
+    CborError err;
 
     if(DBG>=2){
         printf("\nP2P:Received %i bytes:\n", msglen);
@@ -322,14 +331,14 @@ void plant_process_request(const uint8_t* msg, int msglen){
         puts("\n");}
 
     // Initialize encoder to build the reply and open main map
-    init_encoder();
+    init_encoder(false);
     parm_init_reply(&branch_encoder);
 
     // Decode CBOR data, fill the reply and close the main map
     if(DBG>=2) puts("````````````````````Parsing:");
-    parse_cbor_buffer(&it, 0);
+    err = parse_cbor_buffer(&it, 0);
     close_encoder();
     if(DBG>=2) puts(",,,,,,,,,,,,,,,,,,,,Parsing finished");
-    send_encoded_buffer();
+    send_encoded_buffer(encoder_buffer);
 }
 

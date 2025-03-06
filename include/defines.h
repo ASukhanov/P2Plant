@@ -47,12 +47,21 @@ int array_length(uint32_t* shape);
 void dumpbytes(const uint8_t *buf, size_t len);
 void encode_error(CborEncoder* encoder, const char* key, const char* value);
 
+//`````````````````Transport functions`````````````````````````````````````````
+struct GBUF_HEADER{// Generic buffer header
+    uint32_t length;// in bytes
+    uint32_t offset;// number of bytes from beginning of the buffer to data 
+};
+
+int transport_init(uint8_t *buf, uint32_t bufsz);
+int transport_recv(uint8_t **msg);
+int transport_send(uint8_t *msg, size_t msgsz);
+
 //``````````````````Firmware-specific functions````````````````````````````````
 //  entries for main loop
-int plant_init();
-int plant_update();
 void plant_process_request(const uint8_t* msg, int msglen);
-//  Plant's internal functions
+
+//  Plant's internal functions, defined in pv.h
 int parm_init_reply(CborEncoder* encoder);
 int parm_info(const char* parmName);
 int parm_get(const char* parmName);

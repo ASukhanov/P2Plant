@@ -10,15 +10,25 @@
 #include <sys/msg.h>
 
 #include "../include/defines.h"
-#include "../include/transport.h"
 
 //``````````````````Transport variables````````````````````````````````````````
-static MESG_BUFFER rcv_buffer; 
-int msgid_rcv, msgid_snd;
-int msglen = 1;
+// structure for message queue
+//#define MESG_BUFFER_SIZE 10000 //size of typical IP packet
+struct MESG_BUFFER {// For IPC communications
+    long mesg_type; 
+    uint8_t mesg_buf[];
+}; 
+static MESG_BUFFER *recvBuffer;
+
+static int msgid_rcv, msgid_snd;
+static int msglen = 1;
+static uint32_t recvBufSize = 0;
 
 //``````````````````Transport functions````````````````````````````````````````
-int transport_init(void){
+int transport_init(uint8_t *buf, uint32_t bufsz){
+    recvBufSize = bufsz;
+    recvBuffer = (MESG_BUFFER*) buf;
+    
     key_t key; 
     // ftok to generate unique key
     key = ftok("/tmp/ipcbor.ftok", 65);
@@ -27,9 +37,9 @@ int transport_init(void){
         return 1;
     }
     printf("TrI:ftok key: %i\n",key);
-    //rcv_buffer.mesg_type = 27;// 27 is arbitrary
-    rcv_buffer.mesg_type = 1;// ISSUE: other than 1 does not work for msgsnd
-    // msgget creates a rcv_buffer queue and returns identifier 
+    //recvBuffer->mesg_type = 27;// 27 is arbitrary
+    recvBuffer->mesg_type = 1;// ISSUE: other than 1 does not work for msgsnd
+    // msgget creates a recvBuffer queue and returns identifier 
     msgid_rcv = msgget(key, 0666 | IPC_CREAT);
     msgid_snd = msgget(key+1, 0666 | IPC_CREAT);
     printf("TrI:IPC Message Output Queue id_rcv=%i, id_snd=%i \n", msgid_rcv, msgid_snd);
@@ -47,16 +57,24 @@ int transport_init(void){
     return 0;
 }
 int transport_recv(uint8_t **msg){
-    msglen = msgrcv(msgid_rcv, &rcv_buffer, sizeof(rcv_buffer), 1, IPC_NOWAIT);
-    //printf("TrI:Transport Received %i bytes: `%s`\n", msglen, rcv_buffer.mesg_text);
+    msglen = msgrcv(msgid_rcv, recvBuffer, recvBufSize, 1, IPC_NOWAIT);
+    //printf("TrI:Transport Received %i bytes: `%s`\n", msglen, recvBuffer->mesg_buf);
     if (msglen == 0){
         msgctl(msgid_rcv, IPC_RMID, NULL);
         printf("TrI:Message queue destroyed\n");
+        assert(msglen != 0 && "TrI:Message queue destroyed");
     }
-    *msg = (rcv_buffer.mesg_text);
+    *msg = (recvBuffer->mesg_buf);
     return msglen; 
 }
+//TODO Eliminate sendBuffer and extra copy
+#define sendBuffer_size 15000
+struct {
+    long mesg_type = 1; // ISSUE: other than 1 does not work for msgsnd
+    uint8_t mesg_buf[sendBuffer_size];
+} sendBuffer;
 int transport_send(uint8_t *msg, size_t msgsz){
-    memcpy(rcv_buffer.mesg_text, msg, msgsz);
-    return msgsnd(msgid_snd, &rcv_buffer, msgsz, 0);//, IPC_NOWAIT);
+    assert(msgsz < sendBuffer_size && "Send buffer overflow");
+    memcpy(sendBuffer.mesg_buf, msg, msgsz);
+    return msgsnd(msgid_snd, &sendBuffer, msgsz, 0);//, IPC_NOWAIT);
 }

@@ -1,24 +1,25 @@
 /*P2Plqnt implementation of simulated 8-channel ADC.
  */
-#define _VERSION "0.4.2 2025-02-23"// re-factored
+#define _VERSION "1.0.0 2025-03-06"// major_re-factoring
 #include <stdio.h>
 #include <stdlib.h>
 #include <time.h>
 #include "../include/defines.h"
 #include "../include/pv.h"
-#include "../include/transport.h"
 //``````````````````Definitions```````````````````````````````````````````````
 #define mega 1000000
-#define ADC_Max_nChannels 8
-#define ADC_Max_nSamples 1000
+#define ADC_Max_nChannels 1
+#define ADC_Max_nSamples 2000// 100 OK, 1500 too much
 #define ADC_Max_value 4095
-
 
 //`````````````````Global variables```````````````````````````````````````````
 uint8_t DBG = 0; // Debugging verbosity level, 3 is highest.
 extern char* VERSION;
 
 //`````````````````File-scope variables
+#define RECV_BUF_LENGTH 1500
+static uint8_t recv_buf[RECV_BUF_LENGTH];
+
 static uint16_t LoopReportMS = 10000;
 static uint32_t requests_received = 0;
 static uint32_t requests_received_since_last_periodic = 0;
@@ -53,7 +54,7 @@ static PV pv_run = 	{"run",
 static PV pv_debug = {"debug",
     "Show debugging messages", 	T_B, F_WEI};
 static PV pv_sleep = 	{"sleep",
-    "Sleep in the program loop", T_u4, F_R, "ms"};
+    "Sleep in the program loop", T_u4, F_WE, "ms"};
 static PV pv_perf = {"perf",
     "Performance counters. TrigCount, RPS in main loop", T_u4ptr, F_RI};
 
@@ -64,8 +65,10 @@ static PV pv_adc_reclen = {"adc_reclen",
     "Record length. Number of samples of each ADC", T_u2, F_WE};
 static PV pv_adc_srate = {"adc_srate",
     "Sampling rate of ADCs", T_u4, F_WE, "Hz"};
+static PV pv_adc0 = {"adc0",
+    "Array of samples of the first ADC channel", T_u2ptr, F_R, "counts"};
 static PV pv_adcs = {"adcs",
-    "Two-dimentional array[adc#][samples] of ADC samples", T_u2ptr, F_R, "counts"};
+    "Two-dimentional array[adc#][samples] of all ADC channels", T_u2ptr, F_R, "counts"};
 
 // List of active PVs
 static PV* _PVs[] = {
@@ -77,6 +80,7 @@ static PV* _PVs[] = {
   &pv_adc_offsets,
   &pv_adc_reclen,
   &pv_adc_srate,
+  &pv_adc0,
   &pv_adcs,
 };
 //,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
@@ -91,6 +95,8 @@ static void update_adcs(uint32_t base){
         }
     }
     // Update ADC timestamp
+    pv_adc0.timestamp.tv_sec = ptimer_now.tv_sec;
+    pv_adc0.timestamp.tv_nsec = ptimer_now.tv_nsec;
     pv_adcs.timestamp.tv_sec = ptimer_now.tv_sec;
     pv_adcs.timestamp.tv_nsec = ptimer_now.tv_nsec;
 }
@@ -105,22 +111,31 @@ static void periodic_update(){
     pv_perf.timestamp.tv_sec = ptimer_now.tv_sec;
     pv_perf.timestamp.tv_nsec = ptimer_now.tv_nsec;
 }
-//``````````````````Setters````````````````````````````````````````````````````
+//``````````````````Setters```````````````````````````````````````````````````
 static int pv_debug_setter(){
     DBG = pv_debug.value.u2;
     printf(">pv_debug_setter %i \n", DBG);
     return 0;
 }
+//,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+// Parser storage in p2plant
+#define PARSER_BUFSIZE 15000
+//uint32_t sizeof_encoder_buf = PARSER_BUFSIZE;
+static uint8_t encoder_buf[PARSER_BUFSIZE];
+
 // Necessary functions, defined in p2plant
+extern void plant_init(uint8_t *buf, uint32_t bufsize);
 extern void init_encoder(bool subscription);
 extern void close_encoder();
-extern void send_encoded_buffer();
+extern void send_encoded_buffer(uint8_t *buf);
 extern bool plant_client_alive;
 //,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
 //`````````````````Entries for main loop``````````````````````````````````````
-int plant_init(){
+
+static int create_PVs(){
     // Called to initialize PVs, return number of PVs served.
-    printf("simulatedADCs %s\n",_VERSION);
+    printf("simulatedADCs %s, %i[%i] channels\n",_VERSION,
+      ADC_Max_nChannels, ADC_Max_nSamples);
     pv_version.set(_VERSION);
     printf("pv_version: %s\n", pv_version.value.str);
 
@@ -128,7 +143,7 @@ int plant_init(){
     pv_run.legalValues = (char*)"start,stop";
     pv_sleep.opLow = 0;
     pv_sleep.opHigh = 10000;
-    pv_sleep.set(1);
+    pv_sleep.set(100);
     pv_perf.set(perf);
     pv_perf.set_shape(sizeof(perf)/sizeof(perf)[0]);
 
@@ -140,9 +155,10 @@ int plant_init(){
     pv_adc_offsets.bufsize = sizeof(adc_offsets);
 
     // initialize ADCs
-    pv_adc_reclen.set(80);
+    pv_adc_reclen.set(ADC_Max_nSamples);
     pv_adc_srate.set(100000);
     int nsamples = pv_adc_reclen.value.u2;
+    pv_adc0.set_shape(nsamples);
     pv_adcs.set_shape(nch, nsamples);
     update_adcs(0);
     if(DBG>=2){ 
@@ -153,12 +169,16 @@ int plant_init(){
         }
         printf("\n");
     }
+    pv_adc0.set(adc_samples);
     pv_adcs.set(adc_samples);
     PVs = _PVs;
     NPV = (sizeof(_PVs)/sizeof(PV*));
+    printf("`````````List of %i PVs:```````\n",NPV);
+    for (int ii=0; ii<NPV; ii++) printf("    %s\n",(*PVs[ii]).name);
+    printf(",,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,\n");
     return NPV;
 }
-int plant_update()
+static int plant_update()
 // Called to update PVs and stream them to client
 {
     if (pv_sleep.value.u2 != 0){
@@ -170,7 +190,7 @@ int plant_update()
     if (true){
         if(starts_with(pv_run.value.str, "start")){
             trig_count++;
-            if(DBG>=1)printf("Trigger %u\n",trig_count);
+            //if(DBG>=1)printf("Trigger %u\n",trig_count);
 
             update_adcs(trig_count);
 
@@ -178,10 +198,11 @@ int plant_update()
             init_encoder(true);
             // Specify here which PVs (e.g. adcs and perf) to deliver.
             // Function reply_value() is defined in pv.h
-            reply_value("adcs");
+            reply_value("adc0");
+            //reply_value("adcs");
             reply_value("perf");
             close_encoder();
-            send_encoded_buffer();
+            send_encoded_buffer(encoder_buf);
             //,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
         }
     }
@@ -197,13 +218,16 @@ int main(){
     int cycle_count = 0;
     int cycle_count_prev = 0;
 
-    plant_init();
+    plant_init(encoder_buf, PARSER_BUFSIZE);
+
+    create_PVs();
     if (NPV == 0){
         printf("ERR: no parameters served\n");
         return 1;
     }
-    printf("Defined %i parameters\n", NPV);
-    if (transport_init()) exit(1);
+
+    //printf("Defined %i parameters\n", NPV);
+    if (transport_init(recv_buf, RECV_BUF_LENGTH)) exit(1);
     clock_gettime(CLOCK_REALTIME, &ptimer_last_update);
 
     // Main loop
@@ -212,7 +236,7 @@ int main(){
         clock_gettime(CLOCK_REALTIME, &ptimer_now);// latch time
         if (has_periodic_interval_elapsed()){
             host_rps = (cycle_count - cycle_count_prev)*1000/LoopReportMS;
-            printf("ADC:rps=%i reqs:%u,%u, trig:%u client:%i\n",host_rps, requests_received, requests_received_since_last_periodic, trig_count, plant_client_alive);
+            printf("ADC:rps=%i reqs:%u,%u, trig:%u client:%i, DBG:%i\n",host_rps, requests_received, requests_received_since_last_periodic, trig_count, plant_client_alive, DBG);
             periodic_update();
             cycle_count_prev = cycle_count;
             if (requests_received == requests_received_since_last_periodic){
@@ -229,6 +253,7 @@ int main(){
             continue;
         }
 
+        //printf("request[%i] %i received: %s\n", msglen, requests_received, msg);
         requests_received++;
         if (plant_client_alive == false){
             printf("ADC:Client is re-connected.\n");}
