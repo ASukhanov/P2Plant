@@ -78,15 +78,16 @@ enum UARTMsg_ID {
 enum FEATURES {// feature bits like in ADO architecture
     F_W = 0x0001, //writable
     F_R = 0x0002, //readable
-    F_D = 0x0004, //discrete
-    F_A = 0x0008, //archivable
+    F_D = 0x0004, //discrete.   Not used, PV is discrete if it has legal values.
+    F_A = 0x0008, //archivable. Not used
     F_C = 0x0010, //config
     F_I = 0x0020, //diagnostic
-    F_s = 0x0040, //savable
-    F_r = 0x0080, //restorable
+    F_s = 0x0040, //savable.    Not used yet.
+    F_r = 0x0080, //restorable. Not used yet.
     F_E = 0x0100, //editable
+    F_M = (0x0200 | F_R), //Continuous measurements
 };
-char FEATURE_LETTERS[] = "WRDACIsrE";
+char FEATURE_LETTERS[] = "WRDACIsrEM";
 
 #define F_WE  (F_R | F_W | F_E | F_s | F_r)
 #define F_WED (F_R | F_W | F_E | F_s | F_r | F_D )
@@ -428,14 +429,27 @@ static PV* pvof(const char* pvname){
 	}
 	return pv;
 }
-static int reply_value(const char* pvname){
+static int encode_value(const char* pvname){
+    /*Encode PV value using pRootEncoder*/
     CborError err;
-    if(DBG>=2)printf(">reply_value %s\n", pvname);
+    if(DBG>=2)printf(">encode_value %s\n", pvname);
 	PV* pv = pvof(pvname);
 	if (pv == NULL){
         return CborNoError;
 	}
 	err = pv->val2cbor(pRootEncoder);
+    return err;
+}
+int  encode_measurements(){
+    /* Encode all PVs with F_M feature (Continuous Measurements)*/
+    CborError err = CborNoError;
+    for (int ii =0; ii<NPV; ii++){
+        if (PVs[ii]->fbits == F_M){
+            //printf("Measured %s\n",(PVs[ii]->name));
+            err = PVs[ii]->val2cbor(pRootEncoder);
+            if (err != CborNoError) break;
+        }
+    }
     return err;
 }
 static int reply_info(const char* pvname){
@@ -469,7 +483,7 @@ int parm_info(const char* parmName){
 }
 int parm_get(const char* parmName){
     if(DBG>=2)printf(">parm_get %s\n", parmName);
-    return reply_value(parmName);
+    return encode_value(parmName);
 }
 int parm_set(const char* parmName, CborType type, 
   const void* pvalue, uint count){

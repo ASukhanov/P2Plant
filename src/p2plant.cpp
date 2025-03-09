@@ -4,7 +4,7 @@ Supported commands: info, get, set.
 The 'subscribe' command is considered unnecessary. The 'run start/stop' should
 handle the subscription activation.
 */
-const char* VERSION = "1.0.0 2025-03-06";//major re-factoring
+const char* VERSION = "1.0.1 2025-03-07";//deliver_measurements()
 #include <stdio.h>
 #include <stdlib.h>// for free()
 
@@ -16,6 +16,7 @@ extern uint8_t DBG; // Defined in main program
 uint16_t NPV = 0;// Number of parameters
 bool plant_client_alive = true;// if not, then subscription will be suspended
 static uint32_t transport_send_failure = 0;
+extern int  encode_measurements();//defined in pv.h, instantiated in main
 //,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
 //``````````````````Command handlers```````````````````````````````````````````
 
@@ -310,6 +311,12 @@ void send_encoded_buffer(uint8_t *buf){
             plant_client_alive = false;
         }
     }
+}
+void deliver_measurements(){
+    init_encoder(true);
+    encode_measurements();// Encode all continuously measured parameters
+    close_encoder();
+    send_encoded_buffer(encoder_buffer);
 }
 
 void plant_process_request(const uint8_t* msg, int msglen){

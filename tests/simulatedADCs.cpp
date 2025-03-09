@@ -1,6 +1,6 @@
 /*P2Plqnt implementation of simulated 8-channel ADC.
  */
-#define _VERSION "1.0.0 2025-03-06"// major_re-factoring
+#define _VERSION "1.0.1 2025-03-07"// deliver_measurements()
 #include <stdio.h>
 #include <stdlib.h>
 #include <time.h>
@@ -56,7 +56,7 @@ static PV pv_debug = {"debug",
 static PV pv_sleep = 	{"sleep",
     "Sleep in the program loop", T_u4, F_WE, "ms"};
 static PV pv_perf = {"perf",
-    "Performance counters. TrigCount, RPS in main loop", T_u4ptr, F_RI};
+    "Performance counters. TrigCount, RPS in main loop", T_u4ptr, F_M};
 
 // ADC-related PVs
 static PV pv_adc_offsets = {"adc_offsets",// not implemented in MCUFEC
@@ -66,7 +66,7 @@ static PV pv_adc_reclen = {"adc_reclen",
 static PV pv_adc_srate = {"adc_srate",
     "Sampling rate of ADCs", T_u4, F_WE, "Hz"};
 static PV pv_adc0 = {"adc0",
-    "Array of samples of the first ADC channel", T_u2ptr, F_R, "counts"};
+    "Array of samples of the first ADC channel", T_u2ptr, F_M, "counts"};
 static PV pv_adcs = {"adcs",
     "Two-dimentional array[adc#][samples] of all ADC channels", T_u2ptr, F_R, "counts"};
 
@@ -125,9 +125,7 @@ static uint8_t encoder_buf[PARSER_BUFSIZE];
 
 // Necessary functions, defined in p2plant
 extern void plant_init(uint8_t *buf, uint32_t bufsize);
-extern void init_encoder(bool subscription);
-extern void close_encoder();
-extern void send_encoded_buffer(uint8_t *buf);
+extern void deliver_measurements();
 extern bool plant_client_alive;
 //,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
 //`````````````````Entries for main loop``````````````````````````````````````
@@ -173,7 +171,7 @@ static int create_PVs(){
     pv_adcs.set(adc_samples);
     PVs = _PVs;
     NPV = (sizeof(_PVs)/sizeof(PV*));
-    printf("`````````List of %i PVs:```````\n",NPV);
+    printf("`````````Hosting %02i of PVs:`````\n",9);
     for (int ii=0; ii<NPV; ii++) printf("    %s\n",(*PVs[ii]).name);
     printf(",,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,\n");
     return NPV;
@@ -194,16 +192,8 @@ static int plant_update()
 
             update_adcs(trig_count);
 
-            //`````Stream PVs to client```````````````````````````````````````
-            init_encoder(true);
-            // Specify here which PVs (e.g. adcs and perf) to deliver.
-            // Function reply_value() is defined in pv.h
-            reply_value("adc0");
-            //reply_value("adcs");
-            reply_value("perf");
-            close_encoder();
-            send_encoded_buffer(encoder_buf);
-            //,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+            //`````Stream out continuously-measured PVs to client`````````````
+            deliver_measurements();
         }
     }
     return 0;
@@ -236,7 +226,7 @@ int main(){
         clock_gettime(CLOCK_REALTIME, &ptimer_now);// latch time
         if (has_periodic_interval_elapsed()){
             host_rps = (cycle_count - cycle_count_prev)*1000/LoopReportMS;
-            printf("ADC:rps=%i reqs:%u,%u, trig:%u client:%i, DBG:%i\n",host_rps, requests_received, requests_received_since_last_periodic, trig_count, plant_client_alive, DBG);
+            printf("ADC:rps=%i reqs:%u, trig:%u client:%i, DBG:%i\n",host_rps, requests_received, trig_count, plant_client_alive, DBG);
             periodic_update();
             cycle_count_prev = cycle_count;
             if (requests_received == requests_received_since_last_periodic){
